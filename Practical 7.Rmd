@@ -1,0 +1,150 @@
+---
+title: "Practical 7"
+output: html_notebook
+---
+
+```{r}
+if (!require("lubridate")){install.packages("lubridate")}
+library(lubridate)
+
+if (!require("tidyverse")){install.packages("tidyverse")}
+library(tidyverse)
+
+if (!require("janitor")){install.packages("janitor")}
+library(janitor)
+
+if (!require("haven")){install.packages("haven")}
+library(haven)
+```
+
+Q1
+part i:
+```{r}
+medrecord<-readRDS("medrecord.RDS")
+str(medrecord)
+
+# Convert date_update to proper Date format
+medrecord$date_update<-as.Date(substr(medrecord$date_update,5,nchar(medrecord$date_update)),format="%d/%m/%Y")
+head(medrecord$date_update)
+summary(diagnoses$date_diag)
+
+# Convert region to factor
+medrecord$region<-as.factor(medrecord$region)
+```
+part ii:
+```{r}
+# Create date_birth from yob, mob, dob
+medrecord$date_birth<-make_date(day=medrecord$dob,month=medrecord$mob,year=medrecord$yob)
+```
+part iii:
+```{r}
+# Remove dob, mob, yob
+medrecord_2<-medrecord%>%select(-dob,-mob,-yob)
+```
+
+Q2
+part i:
+```{r}
+diagnoses<-read_csv("diagnoses.csv",show_col_types = FALSE)
+
+# Convert date_diag to Date
+diagnoses$date_diag<-as.Date(diagnoses$date_diag, format="%d/%m/%Y")
+head(diagnoses$date_diag)
+summary(diagnoses$date_diag)
+```
+part ii:
+```{r}
+# Label variables (optional with attributes)
+attr(diagnoses,"label")<-"patient ID number"
+attr(diagnoses,"label")<-"Date the diagnosis was made"
+attr(diagnoses,"label")<-"Medical code assigned to diagnosis"
+```
+part iii:
+```{r}
+# Filter for Chikungunya fever (medcode 800)
+diagnoses_cf<-diagnoses%>%filter(medcode==800)
+view(diagnoses_cf)
+```
+
+Q3
+part i:
+```{r}
+symptoms <- readRDS("Symptoms.RDS")
+view(symptoms)
+
+# Convert to long format
+symp_long<-symptoms%>%pivot_longer(cols = -id,names_to = c(".value","visit"),names_pattern ="(.*)_(\\d+)")%>%mutate(visit=as.integer(visit))
+view(symp_long)
+
+# Create lowmood
+symp_long<-symp_long%>%mutate(lowmood=if_else(mood<40,1,0))
+view(symp_long)
+
+# Identify and fix invalid fatigue
+symp_long%>%filter(!fatigue%in%1:5)
+symp_long<-symp_long%>%mutate(fatigue=if_else(fatigue>5,5,fatigue))
+unique(symp_long$fatigue)
+```
+part ii:
+```{r}
+# Merge dataset and extra rows
+str(medrecord_2$id)
+str(diagnoses_cf$id)
+medrecord_2<-medrecord_2%>%mutate(id=as.character(id))
+diagnoses_cf<-diagnoses_cf%>%mutate(id=as.character(id))
+merged_data<-left_join(medrecord_2,diagnoses_cf,by="id")
+view(merged_data)
+
+# Identify unmatched records
+unmatched<-anti_join(diagnoses_cf,medrecord_2,by="id")
+n_distinct(unmatched$id)
+
+# Collapse to region and year
+merged_data%>%mutate(year=year(date_diag))%>%group_by(region,year)%>%summarise(total_cases=n(),.groups = "drop")
+```
+a) Because some individuals were diagnosed with Chikungunya fever in both 2018 and 2019. Each diagnosis is as a separate row in the diagnoses_cf, the join results in duplicate IDs for people with two diagnoses, leading to more than 929 rows.
+b)Yes, there are people in the diagnoses_cf who do not appear in the medical records medrecord_2.
+
+part iii:
+```{r}
+medrecord_part2 <- readRDS("medrecord_part2.RDS")
+view(medrecord_part2)
+
+# Clean and align with medrecord_2
+medrecord_part2 <- medrecord_part2%>%mutate(date_update=as.Date(substr(date_update, 5, nchar(date_update)),format="%d/%m/%Y"),region=as.factor(region),date_birth = dbirth)%>%select(-dbirth)
+colnames(medrecord_part2)
+colnames(medrecord_2)
+
+# Bind together
+medrecord_2<-medrecord_2%>%mutate(across(where(is.labelled),~as.characte))
+medrecord_part2<-medrecord_part2%>%mutate(across(where(is.labelled),~as.character))
+mr_sum<-bind_rows(medrecord_2,medrecord_part2)
+```
+part iv:
+```{r}
+# Merge with symp_long
+symptom_merged<-inner_join(mr_sum, symp_long, by = "id")
+
+# Summarise by fatigue
+symptom_summary<-symptom_merged %>%group_by(fatigue) %>%summarise(num_visits = n(),visits_with_jointpain = sum(jointpain == 1),mean_mood = mean(mood),sd_mood = sd(mood), visits_with_lowmood =sum(lowmood == 1),.groups = "drop")
+```
+
+Q4
+part i:
+```{r}
+treatments<-readRDS("treatment.RDS")
+view(treatments)
+
+# Calculate gap since last treatment
+treatments<-treatment%>%arrange(id,date_treat)%>%group_by(id)%>%mutate(gap=as.numeric(date_treat-lag(date_treat)))%>%ungroup()
+```
+part ii:
+```{r}
+# First treatment
+treat_f<-treatments%>%filter(!is.na(date_treat))%>%group_by(id)%>%slice_min(order_by = date_treat,n=1)%>%ungroup()
+```
+part iii:
+```{r}
+# Last treatment
+treat_l<-treatments%>%group_by(id)%>%slice_max(order_by =date_treat,n=1,with_ties=FALSE)%>%ungroup()
+```
